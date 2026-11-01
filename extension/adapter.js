@@ -66,7 +66,11 @@
     } else {
       const selection = getSelection(), range = document.createRange();
       range.selectNodeContents(e); selection.removeAllRanges(); selection.addRange(range);
-      if (!document.execCommand('insertText', false, text)) throw new Error('浏览器未接受文本插入，请手动发送');
+      // Native insertText can duplicate blank lines in contenteditable. Explicit,
+      // escaped line breaks preserve exact plain text without introducing markup.
+      const multiline = text.includes('\n');
+      const payload = multiline ? text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') : text;
+      if (!document.execCommand(multiline ? 'insertHTML' : 'insertText', false, payload)) throw new Error('浏览器未接受文本插入，请手动发送');
     }
     await new Promise(resolve => setTimeout(resolve, 250));
     if (draft() !== normalize(text)) throw new Error('草稿校验失败，已停止自动发送');

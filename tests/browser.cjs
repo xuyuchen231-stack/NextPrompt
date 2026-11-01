@@ -25,6 +25,12 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   const complete = async text => page.evaluate(text=>{document.querySelector('[data-testid="stop-button"]')?.remove();document.querySelector('#answer [data-message-author-role="assistant"]').textContent=text;const b=document.createElement('button');b.dataset.testid='copy-turn-action-button';b.textContent='复制';document.querySelector('#answer').append(b);},text+'\n'+token);
   const root = '#nextprompt-host ';
   await page.goto('https://chatgpt.com/c/fixture'); await boot();
+  const probe = 'literal <script>window.unwanted=true</script> & quotes\n\nblank line\n\n\nthird line';
+  await page.evaluate(text=>NextPromptAdapter.fill(text),probe);
+  assert.equal(await page.evaluate(()=>NextPromptAdapter.draft()),probe);
+  assert.equal(await page.locator('#prompt-textarea script').count(),0);
+  await page.locator('#prompt-textarea').fill('');
+  console.log('PASS exact multiline/blank-line insertion with escaped markup');
   await page.locator('#prompt-textarea').fill('根据测试结果，只修复仍失败的部分。');
   await page.evaluate(()=>{const a=document.createElement('span');a.dataset.testid='attachment';a.textContent='测试数据.xlsx';document.querySelector('form').append(a);});
   await page.locator(root+'#arm').click();
