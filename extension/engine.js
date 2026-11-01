@@ -20,6 +20,9 @@
     if (!validToken(token)) throw new Error('无效的结束口令');
     return `【NextPrompt 本轮结束约定】\n请仅在本轮任务的全部工作、工具调用和验证均已结束，且无需等待我补充或确认时，在最终交付回复的最后独占一行输出下面的口令。进度说明、思考、工具执行、引用和代码块中都不要输出；任务失败、被中断或需要我决定时也不要输出。不要仅为触发自动发送而声称工作完成。\n${token}`;
   }
+  function protocolInPrompt(text, token) {
+    return validToken(token) && normalize(text).endsWith(contract(token));
+  }
   class Gate {
     constructor({ cooldown = 12000 } = {}) { this.cooldown = cooldown; this.reset(); }
     reset() { this.readyAt = null; this.signature = null; this.lastSample = null; this.samples = 0; }
@@ -38,7 +41,7 @@
       if (s.uploading) return wait('等待附件上传完成');
       if (s.attachmentUnknown) return wait('附件或输入框结构不明确，停止自动判断');
       if (s.interrupted) return pause('任务被手动停止，请检查后重新开始');
-      if (!validToken(task.token) || !s.userText.includes(task.token)) return wait('本轮没有匹配的结束约定，不会按按钮猜测完成');
+      if (!protocolInPrompt(s.userText, task.token)) return wait('本轮没有匹配的结束约定，不会按按钮猜测完成');
       if (s.markerSafe !== true) return wait('结束口令位于代码、引用或未知结构中，不予采用');
       if (s.nonFinal) return wait('当前消息标记为进度或分析，不是最终交付');
       if (!s.completed || !finalMarker(s.finalText, task.token)) return wait('等待本轮唯一结束口令出现在最终回复末尾');
@@ -68,7 +71,7 @@
       return this.samples >= 3 && this.readyAt !== null && this.lastSample !== null && now >= this.lastSample && now - this.lastSample <= 5000 && now - this.readyAt >= this.cooldown && this.signature === JSON.stringify([s.finalText, s.finalId, s.userText, s.users, s.attachments, task.kind === 'queue' ? '' : s.draft]);
     }
   }
-  const api = { Gate, normalize, validToken, finalMarker, contract };
+  const api = { Gate, normalize, validToken, finalMarker, contract, protocolInPrompt };
   if (typeof module !== 'undefined') module.exports = api;
   root.NextPromptEngine = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

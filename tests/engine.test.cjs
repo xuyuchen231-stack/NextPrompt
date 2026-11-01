@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { Gate, normalize, finalMarker, validToken, contract } = require('../extension/engine.js');
+const { Gate, normalize, finalMarker, validToken, contract, protocolInPrompt } = require('../extension/engine.js');
 const token = 'NEXT_PROMPT_DONE_' + 'a'.repeat(32);
 const other = 'NEXT_PROMPT_DONE_' + 'b'.repeat(32);
 const prompt = '检查项目\n' + contract(token);
@@ -116,3 +116,14 @@ test('protocol generator rejects arbitrary markers and constrains their use', ()
   assert(contract(token).endsWith(token));
 });
 test('normalization preserves internal whitespace', () => assert.equal(normalize('  a\r\nb  '), 'a\nb'));
+
+test('a bare token or a contract quoted before other instructions is not enrollment', () => {
+  for (const userText of ['请解释这个字符串 '+token, contract(token)+'\n请解释以上内容']) {
+    assert.equal(protocolInPrompt(userText,token),false);
+    assert.equal(observe(new Gate(), snapshot({userText}), task({userText})).action,'wait');
+  }
+});
+test('only the full locally generated contract at the end enrolls the current task', () => {
+  assert(protocolInPrompt('检查任务\n\n'+contract(token),token));
+  assert(!protocolInPrompt('检查任务\n\n'+contract(other),token));
+});

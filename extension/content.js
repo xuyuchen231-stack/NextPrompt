@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   if (document.getElementById('nextprompt-host')) return;
-  const A = NextPromptAdapter, { Gate, normalize, validToken, contract } = NextPromptEngine;
+  const A = NextPromptAdapter, { Gate, normalize, validToken, contract, protocolInPrompt } = NextPromptEngine;
   const newToken = () => `NEXT_PROMPT_DONE_${crypto.randomUUID().replaceAll("-", "")}`;
   const host = document.createElement('div'); host.id = 'nextprompt-host';
   document.documentElement.append(host);
@@ -70,8 +70,8 @@
       data.tokens = Array.isArray(saved.tokens) ? saved.tokens.filter(validToken).slice(-100) : [];
     }
     const prompt = A.snapshot().userText;
-    for (const token of carriedTokens) if (validToken(token) && prompt.includes(token) && !data.tokens.includes(token)) data.tokens.push(token);
-    if (data.inFlight?.nextToken && validToken(data.inFlight.nextToken) && prompt.includes(data.inFlight.nextToken) && !data.tokens.includes(data.inFlight.nextToken)) data.tokens.push(data.inFlight.nextToken);
+    for (const token of carriedTokens) if (validToken(token) && protocolInPrompt(prompt, token) && !data.tokens.includes(token)) data.tokens.push(token);
+    if (data.inFlight?.nextToken && validToken(data.inFlight.nextToken) && protocolInPrompt(prompt, data.inFlight.nextToken) && !data.tokens.includes(data.inFlight.nextToken)) data.tokens.push(data.inFlight.nextToken);
     await persist();
     loading = false; gate = new Gate({ cooldown: data.cooldown * 1000 });
     show(data.inFlight ? '上次发送结果待核验 · 请检查聊天记录，自动发送已锁定' : '已暂停 · 刷新或切换后需手动启用'); render();
@@ -91,7 +91,7 @@
     finally { mutating = false; }
   }
   function makeTask(kind, s, text) {
-    const token = [...data.tokens].reverse().find(value => s.userText.includes(value));
+    const token = [...data.tokens].reverse().find(value => protocolInPrompt(s.userText, value));
     return { kind, route, text: normalize(text), attachments: s.attachments, users: s.users, userText: s.userText, token };
   }
   async function start(kind) {
@@ -99,7 +99,7 @@
     if (!s.editor || !s.recognized) throw new Error('请先打开已有消息的 ChatGPT 对话');
     if (kind === 'draft' && !s.draft) throw new Error('请先在 ChatGPT 输入框写好下一条文字');
     if (kind === 'queue' && (s.draft || s.attachments)) throw new Error('请先处理输入框里的草稿和附件');
-    if (!data.tokens.some(value => s.userText.includes(value))) throw new Error('本轮没有结束约定：请先复制约定并随本轮任务发送；不会用蓝色箭头猜测');
+    if (!data.tokens.some(value => protocolInPrompt(s.userText, value))) throw new Error('本轮没有结束约定：请先复制约定并随本轮任务发送；不会用蓝色箭头猜测');
     const lease = await chrome.runtime.sendMessage({ type: 'lease', route });
     if (!lease?.ok) throw new Error('另一个标签页正在管理此对话，请先在那边暂停');
     leaseRoute = route;
