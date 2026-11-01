@@ -116,7 +116,12 @@
     const lease = await chrome.runtime.sendMessage({ type: 'lease', route: sendRoute });
     if (!lease?.ok) return stop('无法取得发送锁，已暂停');
     if (!mode || cancelled || !gate.recheck(A.snapshot(), task, performance.now(), { prepared: false })) throw new Error('发送准备前结束证据已变化，已暂停');
-    if (active.kind === 'queue') { filling = true; try { await A.fill(active.text); } finally { filling = false; } }
+    if (active.kind === 'queue') {
+      let insertion;
+      filling = true;
+      try { insertion = A.fill(active.text); } finally { filling = false; }
+      await insertion;
+    }
     let before = A.snapshot();
     if (!mode || cancelled || !gate.recheck(before, active, performance.now())) throw new Error('发送前页面状态变化，已保留草稿并暂停');
     const journal = { id: crypto.randomUUID(), kind: active.kind, at: new Date().toISOString(), itemId: active.kind === 'queue' ? data.items[0].id : null, nextToken };
@@ -219,7 +224,7 @@
     show('已复制诊断 · 不含提示词、附件名称或对话内容');
   });
   for (const name of ['input', 'change']) document.addEventListener(name, event => {
-    if (mode && (!filling || event.isTrusted) && event.target instanceof Element && (event.target.closest(A.SEL.editor) || event.target.closest('form, [data-type="unified-composer"]'))) { if (task) task.edited = true; gate.reset(); }
+    if (mode && !filling && event.target instanceof Element && (event.target.closest(A.SEL.editor) || event.target.closest('form, [data-type="unified-composer"]'))) { if (task) task.edited = true; gate.reset(); }
   }, true);
   document.addEventListener('visibilitychange', () => gate.reset());
   window.addEventListener('offline', () => gate.reset());

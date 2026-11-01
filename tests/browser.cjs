@@ -17,7 +17,7 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
     window.chrome = { storage: { local: { get: async k => ({ [k]: JSON.parse(localStorage.getItem(k) || 'null') }), set: async obj => { for (const [k,v] of Object.entries(obj)) localStorage.setItem(k, JSON.stringify(v)); } } }, runtime: { sendMessage: async () => ({ ok:true }), onMessage: { addListener(){} } } };
   });
   const page = await context.newPage(); const errors=[]; page.on('pageerror',e=>errors.push(e.message));
-  const boot = async () => { await page.evaluate(token => { const k='nextprompt:v1:/c/fixture'; const saved=JSON.parse(localStorage.getItem(k)||'null')||{version:1,items:[],logs:[],cooldown:5,inFlight:null,tokens:[]}; saved.tokens=[...new Set([...(saved.tokens||[]),token])];localStorage.setItem(k,JSON.stringify(saved)); }, token); for (const f of ['engine.js','adapter.js','content.js']) await page.addScriptTag({ path:path.join(__dirname,'../extension',f) }); await page.locator('#nextprompt-host #launcher').click(); await page.waitForFunction(()=>document.querySelector('#nextprompt-host')?.shadowRoot?.getElementById('status').textContent.includes('已暂停')); await page.locator('#nextprompt-host #cooldown').fill('5'); await page.locator('#nextprompt-host #cooldown').dispatchEvent('change'); };
+  const boot = async () => { await page.evaluate(token => { const k='nextprompt:v1:/c/fixture'; const saved=JSON.parse(localStorage.getItem(k)||'null')||{version:1,items:[],logs:[],cooldown:5,inFlight:null,tokens:[]}; saved.tokens=[...new Set([...(saved.tokens||[]),token])];localStorage.setItem(k,JSON.stringify(saved)); }, token); for (const f of ['engine.js','adapter.js','content.js']) await page.addScriptTag({ path:path.join(__dirname,'../extension',f) }); await page.locator('#nextprompt-host #launcher').click(); await page.waitForFunction(()=>document.querySelector('#nextprompt-host')?.shadowRoot?.getElementById('status').textContent.includes('已暂停')); await page.locator('#nextprompt-host summary').click(); await page.locator('#nextprompt-host #cooldown').fill('5'); await page.locator('#nextprompt-host #cooldown').dispatchEvent('change'); await page.locator('#nextprompt-host summary').click(); };
   const complete = async text => page.evaluate(text=>{document.querySelector('[data-testid="stop-button"]')?.remove();document.querySelector('#answer [data-message-author-role="assistant"]').textContent=text;const b=document.createElement('button');b.dataset.testid='copy-turn-action-button';b.textContent='复制';document.querySelector('#answer').append(b);},text+'\n'+token);
   const root = '#nextprompt-host ';
   await page.goto('https://chatgpt.com/c/fixture'); await boot();
@@ -25,6 +25,9 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   await page.evaluate(()=>{const a=document.createElement('span');a.dataset.testid='attachment';a.textContent='测试数据.xlsx';document.querySelector('form').append(a);});
   await page.locator(root+'#arm').click();
   await page.waitForTimeout(2200); assert.equal(await page.evaluate(()=>sent.length),0);
+  await page.evaluate(()=>{document.querySelector('[data-testid="stop-button"]')?.remove();const b=document.createElement('button');b.dataset.testid='copy-turn-action-button';b.textContent='复制';document.querySelector('#answer').append(b);});
+  await page.waitForTimeout(6500); assert.equal(await page.evaluate(()=>sent.length),0);
+  console.log('PASS available send/copy buttons and silence WITHOUT token never send');
   await complete('当前修改已完成，测试已通过。');
   await page.waitForFunction(()=>sent.length===1,null,{timeout:12000});
   assert.equal(await page.evaluate(()=>sent[0]),'根据测试结果，只修复仍失败的部分。');
