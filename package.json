@@ -1,6 +1,6 @@
 {
   "name": "nextprompt",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "A local-first follow-up queue for long-running ChatGPT conversations.",
   "scripts": {
