@@ -21,7 +21,23 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
     try { await page.waitForFunction(count=>sent.length===count,count,{timeout:12000}); }
     catch(error) { console.error('FIXTURE STATE:', JSON.stringify(await page.evaluate(()=>({snapshot:NextPromptAdapter.snapshot(),status:document.querySelector('#nextprompt-host').shadowRoot.getElementById('status').textContent,logs:document.querySelector('#nextprompt-host').shadowRoot.getElementById('logs').textContent,sent})),null,2)); throw error; }
   };
-  const boot = async () => { await page.evaluate(token => { const k='nextprompt:v1:/c/fixture'; const saved=JSON.parse(localStorage.getItem(k)||'null')||{version:1,items:[],logs:[],cooldown:5,inFlight:null,tokens:[]}; saved.tokens=[...new Set([...(saved.tokens||[]),token])];localStorage.setItem(k,JSON.stringify(saved)); }, token); for (const f of ['engine.js','adapter.js','content.js']) await page.addScriptTag({ path:path.join(__dirname,'../extension',f) }); await page.locator('#nextprompt-host #launcher').click(); await page.waitForFunction(()=>document.querySelector('#nextprompt-host')?.shadowRoot?.getElementById('status').textContent.includes('已暂停')); await page.evaluate(token=>document.querySelector('[data-message-author-role="user"]').innerText='检查本轮任务。\n'+NextPromptEngine.contract(token),token); await page.locator('#nextprompt-host summary').click(); await page.locator('#nextprompt-host #cooldown').fill('5'); await page.locator('#nextprompt-host #cooldown').dispatchEvent('change'); await page.locator('#nextprompt-host summary').click(); };
+  const boot = async ({ locked = false } = {}) => {
+    await page.evaluate(token => {
+      const key = 'nextprompt:v1:/c/fixture';
+      const saved = JSON.parse(localStorage.getItem(key)||'null') || { version:1, items:[], logs:[], cooldown:5, inFlight:null, tokens:[] };
+      saved.tokens = [...new Set([...(saved.tokens||[]),token])];
+      localStorage.setItem(key, JSON.stringify(saved));
+    }, token);
+    for (const file of ['engine.js','adapter.js','content.js']) await page.addScriptTag({ path:path.join(__dirname,'../extension',file) });
+    await page.locator('#nextprompt-host #launcher').click();
+    await page.waitForFunction(locked => document.querySelector('#nextprompt-host')?.shadowRoot?.getElementById('status').textContent.includes(locked ? '待核验' : '已暂停'), locked);
+    if (locked) return;
+    await page.evaluate(token => document.querySelector('[data-message-author-role="user"]').innerText = '检查本轮任务。\n' + NextPromptEngine.contract(token), token);
+    await page.locator('#nextprompt-host summary').click();
+    await page.locator('#nextprompt-host #cooldown').fill('5');
+    await page.locator('#nextprompt-host #cooldown').dispatchEvent('change');
+    await page.locator('#nextprompt-host summary').click();
+  };
   const complete = async text => page.evaluate(text=>{document.querySelector('[data-testid="stop-button"]')?.remove();document.querySelector('#answer [data-message-author-role="assistant"]').textContent=text;const b=document.createElement('button');b.dataset.testid='copy-turn-action-button';b.textContent='复制';document.querySelector('#answer').append(b);},text+'\n'+token);
   const root = '#nextprompt-host ';
   await page.goto('https://chatgpt.com/c/fixture'); await boot();
@@ -64,6 +80,7 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   assert(sentItems[0].startsWith('检查改动，报告剩余问题。\n\n【NextPrompt'));
   assert(sentItems[1].startsWith('根据实际结果给出下一步建议。\n\n【NextPrompt'));
   assert.notEqual(sentItems[0].match(/NEXT_PROMPT_DONE_[a-f0-9]{32}/g).at(-1),sentItems[1].match(/NEXT_PROMPT_DONE_[a-f0-9]{32}/g).at(-1));
+  await page.waitForFunction(()=>document.querySelector('#nextprompt-host').shadowRoot.getElementById('status').textContent.includes('已完成'));
   console.log('PASS two-item queue waits for a new answer between sends');
   await page.reload(); await boot();
   assert.equal(await page.locator(root+'#count').textContent(),'0 条');
@@ -78,6 +95,11 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   await page.evaluate(()=>document.querySelector('[data-message-author-role="user"]').textContent='没有结束约定的任务');
   await page.locator(root+'#arm').click();
   assert((await page.locator(root+'#status').textContent()).includes('本轮没有结束约定'));
+  await page.evaluate(()=>{const key='nextprompt:v1:/c/fixture';const saved=JSON.parse(localStorage.getItem(key));saved.inFlight={id:'interrupted-fixture-attempt',kind:'queue',at:new Date().toISOString()};localStorage.setItem(key,JSON.stringify(saved));});
+  await page.reload(); await boot({locked:true});
+  assert(await page.locator(root+'#arm').isDisabled());
+  assert(await page.locator(root+'#run').isDisabled());
+  console.log('PASS reload with an uncertain send remains locked without retry');
   assert.deepEqual(errors,[]); console.log('PASS persistence, reload-paused, UI runtime; screenshot saved');
  } finally { await browser.close(); }
 })().catch(e=>{console.error(e);process.exitCode=1;});
