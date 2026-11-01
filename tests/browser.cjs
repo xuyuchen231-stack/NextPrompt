@@ -16,7 +16,11 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   await context.addInitScript(() => {
     window.chrome = { storage: { local: { get: async k => ({ [k]: JSON.parse(localStorage.getItem(k) || 'null') }), set: async obj => { for (const [k,v] of Object.entries(obj)) localStorage.setItem(k, JSON.stringify(v)); } } }, runtime: { sendMessage: async () => ({ ok:true }), onMessage: { addListener(){} } } };
   });
-  const page = await context.newPage(); const errors=[]; page.on('pageerror',e=>errors.push(e.message));
+  const page = await context.newPage(); const errors=[]; page.on('pageerror',e=>{errors.push(e.message);console.error('FIXTURE PAGE ERROR:',e.message);});
+  const waitForSent = async count => {
+    try { await page.waitForFunction(count=>sent.length===count,count,{timeout:12000}); }
+    catch(error) { console.error('FIXTURE STATE:', JSON.stringify(await page.evaluate(()=>({snapshot:NextPromptAdapter.snapshot(),status:document.querySelector('#nextprompt-host').shadowRoot.getElementById('status').textContent,logs:document.querySelector('#nextprompt-host').shadowRoot.getElementById('logs').textContent,sent})),null,2)); throw error; }
+  };
   const boot = async () => { await page.evaluate(token => { const k='nextprompt:v1:/c/fixture'; const saved=JSON.parse(localStorage.getItem(k)||'null')||{version:1,items:[],logs:[],cooldown:5,inFlight:null,tokens:[]}; saved.tokens=[...new Set([...(saved.tokens||[]),token])];localStorage.setItem(k,JSON.stringify(saved)); }, token); for (const f of ['engine.js','adapter.js','content.js']) await page.addScriptTag({ path:path.join(__dirname,'../extension',f) }); await page.locator('#nextprompt-host #launcher').click(); await page.waitForFunction(()=>document.querySelector('#nextprompt-host')?.shadowRoot?.getElementById('status').textContent.includes('已暂停')); await page.locator('#nextprompt-host summary').click(); await page.locator('#nextprompt-host #cooldown').fill('5'); await page.locator('#nextprompt-host #cooldown').dispatchEvent('change'); await page.locator('#nextprompt-host summary').click(); };
   const complete = async text => page.evaluate(text=>{document.querySelector('[data-testid="stop-button"]')?.remove();document.querySelector('#answer [data-message-author-role="assistant"]').textContent=text;const b=document.createElement('button');b.dataset.testid='copy-turn-action-button';b.textContent='复制';document.querySelector('#answer').append(b);},text+'\n'+token);
   const root = '#nextprompt-host ';
@@ -29,7 +33,7 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   await page.waitForTimeout(6500); assert.equal(await page.evaluate(()=>sent.length),0);
   console.log('PASS available send/copy buttons and silence WITHOUT token never send');
   await complete('当前修改已完成，测试已通过。');
-  await page.waitForFunction(()=>sent.length===1,null,{timeout:12000});
+  await waitForSent(1);
   assert.equal(await page.evaluate(()=>sent[0]),'根据测试结果，只修复仍失败的部分。');
   await page.waitForTimeout(1500); assert.equal(await page.evaluate(()=>sent.length),1);
   console.log('PASS native draft + attachment; busy blocks; confirmed once only');
@@ -45,11 +49,11 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   await page.locator('#prompt-textarea').fill('');
   for (const text of ['检查改动，报告剩余问题。','根据实际结果给出下一步建议。']) { await page.locator(root+'#new-task').fill(text); await page.locator(root+'#add').click(); }
   await page.locator(root+'#run').click();
-  await page.waitForFunction(()=>sent.length===1,null,{timeout:12000});
+  await waitForSent(1);
   await page.waitForTimeout(6500); assert.equal(await page.evaluate(()=>sent.length),1);
   // Replace the prior assistant with a new completed turn.
   await page.evaluate(()=>{const token=sent[0].match(/NEXT_PROMPT_DONE_[a-f0-9]{32}/g).at(-1);const a=document.createElement('article');a.id='new-answer';const body=document.createElement('div');body.dataset.messageAuthorRole='assistant';body.textContent='这是新一轮检查结果。\n'+token;const b=document.createElement('button');b.dataset.testid='copy-turn-action-button';b.textContent='复制';a.append(body,b);document.querySelector('main').append(a);document.querySelector('[data-testid="stop-button"]')?.remove();});
-  await page.waitForFunction(()=>sent.length===2,null,{timeout:12000});
+  await waitForSent(2);
   const sentItems=await page.evaluate(()=>sent);
   assert(sentItems[0].startsWith('检查改动，报告剩余问题。\n\n【NextPrompt'));
   assert(sentItems[1].startsWith('根据实际结果给出下一步建议。\n\n【NextPrompt'));
