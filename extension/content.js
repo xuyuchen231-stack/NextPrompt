@@ -1,7 +1,8 @@
 (() => {
   'use strict';
   if (document.getElementById('nextprompt-host')) return;
-  const A = NextPromptAdapter, { Gate, normalize } = NextPromptEngine;
+  const A = NextPromptAdapter, { Gate, normalize, validToken, contract, protocolInPrompt } = NextPromptEngine;
+  const newToken = () => `NEXT_PROMPT_DONE_${crypto.randomUUID().replaceAll("-", "")}`;
   const host = document.createElement('div'); host.id = 'nextprompt-host';
   document.documentElement.append(host);
   const ui = host.attachShadow({ mode: 'open' });
@@ -15,17 +16,18 @@
   <button id="launcher" aria-label="打开 NextPrompt">N → 下一步</button>
   <section id="panel" hidden aria-label="NextPrompt 控制面板">
     <header><div class="row between"><div><h1>NextPrompt <span style="font-weight:400;font-size:15px">下一步</span></h1><p class="sub">想好下一步，不必守着等。</p></div><button id="close" aria-label="收起面板">×</button></div><p class="sub" id="route"></p><div id="status" role="status">正在读取本地队列…</div></header>
+    <div class="section"><h2>00 · 本轮结束约定</h2><small>任务开始前，复制随机结束约定，粘贴在本轮提示词末尾一并发送。只有最终回答末尾匹配本轮口令才继续。</small><div class="controls"><button class="wide" id="prepare">生成并复制本轮结束约定</button></div><small>已在运行且没有约定的任务，不会自动猜测结束。队列发出的任务会自动附加下一轮新约定。</small></div>
     <div class="section"><h2>01 · 当前草稿</h2><small>在 ChatGPT 原生输入框写好文字、附上文件，再启用。附件原位保留；修改后会自动暂停。</small><div class="controls"><button class="primary wide" id="arm">本轮结束后发送当前草稿</button><button class="wide danger" id="pause">暂停全部自动发送</button></div></div>
     <div class="section"><div class="row between"><h2>02 · 后续任务</h2><span class="badge" id="count">0 条</span></div><textarea id="new-task" aria-label="下一步任务" placeholder="例如：根据刚才的测试结果，只修复仍失败的部分，并报告验证结果。"></textarea><div class="controls"><button id="add">加入队列</button><button class="primary" id="run">启动文字队列</button></div><small>队列仅保存文字。含附件的下一条请使用上方“当前草稿”。</small><div id="queue"></div></div>
-    <div class="section"><details><summary>设置、备份与诊断</summary><p><label>稳定等待 <input id="cooldown" type="number" min="5" max="120" value="12" aria-label="稳定等待秒数"> 秒</label><small>只有识别到最后回答的完成标记后才开始计时；不按总耗时猜测结束。</small></p><div class="controls"><button id="export">导出当前队列</button><button id="import">导入文字任务</button><button id="diagnostics">复制诊断</button></div><input id="import-file" type="file" accept="application/json,.json" hidden><div class="controls"><button class="danger" id="resolve" hidden>已手动核验，解除发送锁定</button></div><p><small>刷新后需重新启动。发送结果不明时不会重试。保持电脑唤醒；新界面可能需要更新适配器。</small></p><ul id="logs"></ul></details></div>
-    <div class="section"><small>v1.0 · 本地存储 · 无 API Key · 无遥测<br>非 OpenAI 官方产品。Work 界面兼容性需要实际验证；识别不到完成标记时会等待。</small></div>
+    <div class="section"><details><summary>设置、备份与诊断</summary><p><label>稳定等待 <input id="cooldown" type="number" min="5" max="120" value="12" aria-label="稳定等待秒数"> 秒</label><small>口令匹配后才开始连续确认；不使用按钮颜色或静默时间猜测完成。后台标签、离线或休眠恢复会重新观察。</small></p><div class="controls"><button id="export">导出当前队列</button><button id="import">导入文字任务</button><button id="diagnostics">复制诊断</button></div><input id="import-file" type="file" accept="application/json,.json" hidden><div class="controls"><button class="danger" id="resolve" hidden>已手动核验，解除发送锁定</button></div><p><small>刷新后需重新启动。发送结果不明时不会重试。保持电脑唤醒；新界面可能需要更新适配器。</small></p><ul id="logs"></ul></details></div>
+    <div class="section"><small>v1.1 · 本地存储 · 无 API Key · 无遥测<br>非 OpenAI 官方产品。Work 界面兼容性需要实际验证；无本轮结束口令时不会发送。需保持标签页可见。</small></div>
   </section>`;
   const $ = id => ui.getElementById(id);
   let route = location.pathname, data, task = null, mode = null, ticking = false, mutating = false, loading = true;
-  let lastTick = Date.now();
+  let lastTick = performance.now(), filling = false;
   let status = '已暂停 · 请准备下一步', gate = new Gate(), leaseRoute = null, persistChain = Promise.resolve();
   const key = () => `nextprompt:v1:${route}`;
-  const blank = () => ({ version: 1, items: [], cooldown: 12, logs: [], inFlight: null });
+  const blank = () => ({ version: 1, items: [], cooldown: 12, logs: [], tokens: [], inFlight: null });
   function persist() {
     const storageKey = key(), value = structuredClone(data);
     persistChain = persistChain.catch(() => {}).then(() => chrome.storage.local.set({ [storageKey]: value }));
@@ -53,10 +55,10 @@
     }));
     $('arm').disabled = loading || !!mode || !!data.inFlight;
     $('run').disabled = loading || !!mode || !!data.inFlight || !data.items.length;
-    for (const id of ['add', 'import', 'cooldown']) $(id).disabled = loading || !!mode || !!data.inFlight;
+    for (const id of ['add', 'import', 'cooldown', 'prepare']) $(id).disabled = loading || !!mode || !!data.inFlight;
     $('logs').replaceChildren(...data.logs.map(entry => { const li = document.createElement('li'); li.textContent = `${new Date(entry.time).toLocaleTimeString()} · ${entry.text}`; return li; }));
   }
-  async function load() {
+  async function load(carriedTokens = []) {
     loading = true; task = null; mode = null; gate.reset();
     const saved = (await chrome.storage.local.get(key()))[key()];
     data = blank();
@@ -65,7 +67,12 @@
       data.cooldown = Math.max(5, Math.min(120, Number(saved.cooldown) || 12));
       data.logs = Array.isArray(saved.logs) ? saved.logs.slice(0, 50) : [];
       data.inFlight = saved.inFlight || null;
+      data.tokens = Array.isArray(saved.tokens) ? saved.tokens.filter(validToken).slice(-100) : [];
     }
+    const prompt = A.snapshot().userText;
+    for (const token of carriedTokens) if (validToken(token) && protocolInPrompt(prompt, token) && !data.tokens.includes(token)) data.tokens.push(token);
+    if (data.inFlight?.nextToken && validToken(data.inFlight.nextToken) && protocolInPrompt(prompt, data.inFlight.nextToken) && !data.tokens.includes(data.inFlight.nextToken)) data.tokens.push(data.inFlight.nextToken);
+    await persist();
     loading = false; gate = new Gate({ cooldown: data.cooldown * 1000 });
     show(data.inFlight ? '上次发送结果待核验 · 请检查聊天记录，自动发送已锁定' : '已暂停 · 刷新或切换后需手动启用'); render();
   }
@@ -83,14 +90,16 @@
     try { await action(); } catch (error) { if (data) { log('操作停止：' + error.message); await stop(error.message); } else show(error.message); }
     finally { mutating = false; }
   }
-  function makeTask(kind, s, text, afterFinal) {
-    return { kind, route, text: normalize(text), attachments: s.attachments, users: s.users, afterFinal };
+  function makeTask(kind, s, text) {
+    const token = [...data.tokens].reverse().find(value => protocolInPrompt(s.userText, value));
+    return { kind, route, text: normalize(text), attachments: s.attachments, users: s.users, userText: s.userText, token };
   }
   async function start(kind) {
     const s = A.snapshot();
     if (!s.editor || !s.recognized) throw new Error('请先打开已有消息的 ChatGPT 对话');
     if (kind === 'draft' && !s.draft) throw new Error('请先在 ChatGPT 输入框写好下一条文字');
     if (kind === 'queue' && (s.draft || s.attachments)) throw new Error('请先处理输入框里的草稿和附件');
+    if (!data.tokens.some(value => protocolInPrompt(s.userText, value))) throw new Error('本轮没有结束约定：请先复制约定并随本轮任务发送；不会用蓝色箭头猜测');
     const lease = await chrome.runtime.sendMessage({ type: 'lease', route });
     if (!lease?.ok) throw new Error('另一个标签页正在管理此对话，请先在那边暂停');
     leaseRoute = route;
@@ -101,16 +110,24 @@
   }
   async function dispatch() {
     // Lease and state are rechecked after awaits, immediately before clicking.
-    const active = task, sendRoute = route;
+    const active = { ...task }, sendRoute = route;
+    const nextToken = active.kind === 'queue' ? newToken() : null;
+    if (nextToken) active.text = `${active.text}\n\n${contract(nextToken)}`;
     const lease = await chrome.runtime.sendMessage({ type: 'lease', route: sendRoute });
     if (!lease?.ok) return stop('无法取得发送锁，已暂停');
-    if (active.kind === 'queue') await A.fill(active.text);
+    if (!mode || cancelled || !gate.recheck(A.snapshot(), task, performance.now(), { prepared: false })) throw new Error('发送准备前结束证据已变化，已暂停');
+    if (active.kind === 'queue') {
+      let insertion;
+      filling = true;
+      try { insertion = A.fill(active.text); } finally { filling = false; }
+      await insertion;
+    }
     let before = A.snapshot();
-    if (before.route !== active.route || before.users !== active.users || before.busy || before.error || before.uploading || !before.sendable || before.draft !== active.text || before.attachments !== active.attachments || !before.completed) throw new Error('发送前页面状态变化，已保留草稿并暂停');
-    const journal = { id: crypto.randomUUID(), kind: active.kind, at: new Date().toISOString(), itemId: active.kind === 'queue' ? data.items[0].id : null };
+    if (!mode || cancelled || !gate.recheck(before, active, performance.now())) throw new Error('发送前页面状态变化，已保留草稿并暂停');
+    const journal = { id: crypto.randomUUID(), kind: active.kind, at: new Date().toISOString(), itemId: active.kind === 'queue' ? data.items[0].id : null, nextToken };
     data.inFlight = journal; log('已记录发送尝试，正在等待网页确认'); await persist();
     before = A.snapshot();
-    if (before.route !== active.route || before.users !== active.users || before.busy || before.error || before.uploading || !before.sendable || before.draft !== active.text || before.attachments !== active.attachments || !before.completed) throw new Error('发送前最终校验失败，请手动检查并解除锁定');
+    if (!mode || cancelled || !gate.recheck(before, active, performance.now())) throw new Error('发送前最终校验失败，请手动检查并解除锁定');
     A.send();
     let acknowledged = false;
     for (let i = 0; i < 20; i++) {
@@ -123,11 +140,13 @@
     }
     if (!acknowledged) throw new Error('发送结果不明确 · 请检查聊天记录，不会自动重试');
     data.inFlight = null;
+    data.tokens = data.tokens.filter(value => value !== active.token);
+    if (nextToken) data.tokens.push(nextToken);
     if (active.kind === 'queue') data.items.shift();
     log('已确认新消息出现在对话中'); await persist();
     if (cancelled || !mode) return stop('已暂停 · 本条发送已确认');
     if (active.kind === 'draft' || !data.items.length) return stop('已完成 · 所有指定消息已发送');
-    task = makeTask('queue', A.snapshot(), data.items[0].text, before.finalText);
+    task = makeTask('queue', A.snapshot(), data.items[0].text);
     gate.reset(); render(); show('等待新一轮回答完成');
   }
   async function tick() {
@@ -135,12 +154,13 @@
     ticking = true;
     try {
       if (location.pathname !== route) {
-        await stop('对话已切换'); await persistChain.catch(() => {}); route = location.pathname; await load(); return;
+        const carriedTokens = /\/c\/[^/]+\/?$/.test(route) ? [] : [...data.tokens];
+        await stop('对话已切换'); await persistChain.catch(() => {}); route = location.pathname; await load(carriedTokens); return;
       }
       if (!mode) return;
       const lease = await chrome.runtime.sendMessage({ type: 'lease', route });
       if (!lease?.ok) return stop('另一个标签页持有发送锁，已暂停');
-      const now = Date.now();
+      const now = performance.now();
       if (now - lastTick > 5000) gate.reset();
       lastTick = now;
       const s = A.snapshot();
@@ -155,6 +175,13 @@
   }
   $('launcher').onclick = () => { $('panel').hidden = !$('panel').hidden; };
   $('close').onclick = () => { $('panel').hidden = true; };
+  $('prepare').onclick = () => safely(async () => {
+    const token = newToken();
+    if (data.tokens.length >= 100) throw new Error('结束约定已达到 100 条，请清理或更换对话');
+    data.tokens.push(token); await persist();
+    await navigator.clipboard.writeText(contract(token));
+    show('结束约定已复制 · 请粘贴在本轮任务末尾一并发送');
+  });
   $('arm').onclick = () => safely(() => start('draft'));
   $('run').onclick = () => safely(() => start('queue'));
   // Pause is checked during dispatch too: mark cancellation synchronously, then release after tick.
@@ -193,9 +220,15 @@
   });
   $('diagnostics').onclick = () => safely(async () => {
     const s = A.snapshot();
-    await navigator.clipboard.writeText(JSON.stringify({ version: '1.0.0', editor: s.editor, recognized: s.recognized, busy: s.busy, uploading: s.uploading, error: s.error, sendable: s.sendable, completed: s.completed, hasDraft: !!s.draft, hasAttachments: !!s.attachments, mode, locked: !!data.inFlight }, null, 2));
+    await navigator.clipboard.writeText(JSON.stringify({ version: '1.1.0', editor: s.editor, recognized: s.recognized, busy: s.busy, uploading: s.uploading, error: s.error, sendable: s.sendable, completed: s.completed, online: s.online, foreground: s.foreground, nonFinal: s.nonFinal, interrupted: s.interrupted, protocolReady: !!task?.token, hasDraft: !!s.draft, hasAttachments: !!s.attachments, mode, locked: !!data.inFlight }, null, 2));
     show('已复制诊断 · 不含提示词、附件名称或对话内容');
   });
+  for (const name of ['input', 'change']) document.addEventListener(name, event => {
+    if (mode && !filling && event.target instanceof Element && (event.target.closest(A.SEL.editor) || event.target.closest('form, [data-type="unified-composer"]'))) { if (task) task.edited = true; gate.reset(); }
+  }, true);
+  document.addEventListener('visibilitychange', () => gate.reset());
+  window.addEventListener('offline', () => gate.reset());
+  window.addEventListener('online', () => gate.reset());
   chrome.runtime.onMessage.addListener(message => { if (message.type === 'toggle-panel') $('launcher').click(); });
   load().then(() => setInterval(tick, 1000)).catch(error => show('无法读取本地队列：' + error.message));
 })();

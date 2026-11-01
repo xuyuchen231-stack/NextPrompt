@@ -1,16 +1,41 @@
 {
   "manifest_version": 3,
   "name": "NextPrompt · 下一步",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "为长时间 ChatGPT 任务准备下一步：草稿自动发送、对话独立队列、附件原位保留、暂停与发送校验。",
-  "permissions": ["storage"],
-  "background": { "service_worker": "background.js" },
-  "action": { "default_title": "打开 NextPrompt · 下一步" },
-  "content_scripts": [{
-    "matches": ["https://chatgpt.com/*"],
-    "js": ["engine.js", "adapter.js", "content.js"],
-    "run_at": "document_idle"
-  }],
-  "commands": { "toggle-panel": { "suggested_key": { "default": "Alt+Shift+Q" }, "description": "打开或收起 NextPrompt" } },
-  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+  "permissions": [
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "打开 NextPrompt · 下一步"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "engine.js",
+        "adapter.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "toggle-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+Q"
+      },
+      "description": "打开或收起 NextPrompt"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
 }

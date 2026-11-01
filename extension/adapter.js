@@ -11,8 +11,9 @@
     final: 'button[data-testid="copy-turn-action-button"], button[data-testid="good-response-turn-action-button"], button[aria-label="Copy response"], button[aria-label="复制回复"]',
     attachment: '[data-testid="attachment"], [data-testid="file-preview"], [data-testid="attachment-preview"], button[aria-label*="Remove file"], button[aria-label*="移除文件"], button[aria-label*="Remove image"], button[aria-label*="移除图片"]'
   };
-  function editor() { return first(document, SEL.editor); }
-  function composer() { const e = editor(); return e?.closest('form') || e?.closest('[data-type="unified-composer"]') || e?.parentElement; }
+  const editors = () => [...document.querySelectorAll(SEL.editor)].filter(visible);
+  function editor() { return editors().length === 1 ? editors()[0] : null; }
+  function composer() { const e = editor(); return e?.closest('form') || e?.closest('[data-type="unified-composer"]'); }
   function draft() { const e = editor(); return normalize(e?.value ?? e?.innerText); }
   function attachmentSignature(scope) {
     if (!scope) return '';
@@ -29,18 +30,27 @@
     // Final actions may be siblings of the message body, but must belong to the LAST assistant turn.
     const turn = last?.closest('[data-testid^="conversation-turn-"], article') || last;
     const send = first(scope || document, SEL.send);
+    const channel = last?.getAttribute('data-message-channel') || last?.getAttribute('data-channel') || turn?.getAttribute('data-message-channel');
     const error = [...document.querySelectorAll('[role="alert"], [role="alertdialog"]')].some(x => visible(x) && normalize(x.textContent));
     return {
       route: location.pathname,
+      online: navigator.onLine,
+      foreground: document.visibilityState === 'visible',
+      interrupted: interruptedUser !== null && normalize(lastUser?.innerText) === interruptedUser,
+      markerSafe: !!last && !!normalize(last.innerText) && ![...last.querySelectorAll('pre, code, blockquote')].some(node => normalize(node.innerText).split('\n').at(-1) === normalize(last.innerText).split('\n').at(-1)),
+      nonFinal: !!channel && channel !== 'final',
+      finalId: last?.getAttribute('data-message-id') || turn?.getAttribute('data-testid') || '',
+      userText: normalize(lastUser?.innerText),
       editor: !!e,
       recognized: /\/c\/[^/]+\/?$/.test(location.pathname) && !!scope && !!document.querySelector('[data-message-author-role]'),
       draft: draft(),
       attachments: attachmentSignature(scope),
-      busy: !!first(document, SEL.stop) || !!first(document, '[data-is-streaming="true"], [data-testid="thinking-indicator"]'),
+      busy: !!first(document, SEL.stop) || !!first(document, '[data-is-streaming="true"], [data-testid="thinking-indicator"], main [aria-busy="true"], main [role="progressbar"]'),
+      attachmentUnknown: !scope || (!!first(scope, 'input[type="file"]')?.files?.length && !attachmentSignature(scope)),
       uploading: !!scope && !!first(scope, '[role="progressbar"], [aria-busy="true"], [data-state="uploading"]'),
       error,
       sendable: !!send && !send.disabled && send.getAttribute('aria-disabled') !== 'true',
-      completed: followsUser && !!turn && !!first(turn, SEL.final),
+      completed: followsUser && !!turn && !!first(turn, SEL.final) && !(last?.closest('pre, code, blockquote')),
       finalText: normalize(last?.innerText),
       users: document.querySelectorAll('[data-message-author-role="user"]').length
     };
@@ -56,7 +66,11 @@
     } else {
       const selection = getSelection(), range = document.createRange();
       range.selectNodeContents(e); selection.removeAllRanges(); selection.addRange(range);
-      if (!document.execCommand('insertText', false, text)) throw new Error('浏览器未接受文本插入，请手动发送');
+      // Native insertText can duplicate blank lines in contenteditable. Explicit,
+      // escaped line breaks preserve exact plain text without introducing markup.
+      const multiline = text.includes('\n');
+      const payload = multiline ? text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') : text;
+      if (!document.execCommand(multiline ? 'insertHTML' : 'insertText', false, payload)) throw new Error('浏览器未接受文本插入，请手动发送');
     }
     await new Promise(resolve => setTimeout(resolve, 250));
     if (draft() !== normalize(text)) throw new Error('草稿校验失败，已停止自动发送');
@@ -66,5 +80,9 @@
     if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') throw new Error('发送按钮不可用');
     button.click();
   }
+  let interruptedUser = null;
+  document.addEventListener('click', event => {
+    if (event.target instanceof Element && event.target.closest(SEL.stop)) interruptedUser = normalize([...document.querySelectorAll('[data-message-author-role="user"]')].at(-1)?.innerText);
+  }, true);
   root.NextPromptAdapter = { snapshot, fill, send, draft, SEL };
 })(globalThis);

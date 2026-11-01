@@ -1,5 +1,9 @@
 name: Check and package
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -20,5 +24,5 @@ jobs:
       - run: npm run package
       - uses: actions/upload-artifact@v4
         with:
-          name: nextprompt-v1.0.0
-          path: dist/nextprompt-v1.0.0.zip
+          name: nextprompt-v1.1.0
+          path: dist/nextprompt-v1.1.0.zip
