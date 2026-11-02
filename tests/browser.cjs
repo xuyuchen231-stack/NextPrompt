@@ -115,6 +115,7 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   assert.equal(await page.locator(root+'#nav-count').textContent(),'3');
   assert.equal(await page.locator(root+'#char-count').textContent(),'0');
   await page.waitForFunction(()=>document.querySelector('#nextprompt-host').shadowRoot.querySelector('[data-logo]').naturalWidth>0);
+  await page.locator(root+'#tab-queue').click();
   fs.mkdirSync(path.join(__dirname,'../docs/images'),{recursive:true});
   await page.screenshot({path:path.join(__dirname,'../docs/images/preview.png'),fullPage:true});
   await page.locator(root+'#panel').screenshot({path:path.join(__dirname,'../docs/images/queue.png')});
