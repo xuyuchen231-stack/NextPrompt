@@ -3,28 +3,10 @@
   if (document.getElementById('nextprompt-host')) return;
   const A = NextPromptAdapter, { Gate, normalize, validToken, contract, protocolInPrompt } = NextPromptEngine;
   const newToken = () => `NEXT_PROMPT_DONE_${crypto.randomUUID().replaceAll("-", "")}`;
-  const host = document.createElement('div'); host.id = 'nextprompt-host';
-  document.documentElement.append(host);
-  const ui = host.attachShadow({ mode: 'open' });
-  ui.innerHTML = `<style>
-    :host{all:initial;color-scheme:light;font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;color:#152433}
-    *{box-sizing:border-box}button,input,textarea,select{font:inherit}button{cursor:pointer;border:1px solid #d9e3ec;border-radius:9px;padding:8px 11px;background:white;color:#24384b}button:hover{background:#eef5fa}button:disabled{opacity:.45;cursor:default}
-    #launcher{position:fixed;right:24px;bottom:22px;z-index:2147483646;border:0;background:#124d5c;color:white;box-shadow:0 8px 26px #102f4330;padding:11px 17px;border-radius:24px;font-weight:650}
-    #panel{position:fixed;right:24px;bottom:80px;width:390px;max-width:calc(100vw - 24px);max-height:calc(100vh - 110px);overflow:auto;background:#f7f9fc;border:1px solid #d7e2e9;border-radius:18px;z-index:2147483646;box-shadow:0 18px 70px #102f4338}
-    [hidden]{display:none!important}header{padding:18px 18px 12px;background:white;border-bottom:1px solid #e2eaf0}h1{font-size:20px;letter-spacing:-.5px;line-height:1.3;margin:0}h2{font-size:14px;margin:0 0 9px}.sub{font-size:12px;color:#65798c;margin:4px 0 0}.row{display:flex;gap:8px;align-items:center}.between{justify-content:space-between}.section{padding:14px 18px;border-bottom:1px solid #e2eaf0}.primary{background:#124d5c;color:#fff;border-color:#124d5c}.primary:hover{background:#176377}.danger{color:#a3323a}#status{background:#eaf1f5;padding:10px 12px;border-radius:10px;margin-top:12px;font-size:13px;word-break:break-word}#status[data-active="true"]{background:#e0f2ea;color:#15583e}textarea{width:100%;resize:vertical;min-height:82px;border:1px solid #cfdce6;border-radius:9px;padding:10px;background:white;color:#152433}small{font-size:12px;color:#607488}label{display:block}.controls{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.item{background:white;border:1px solid #dce5ec;border-radius:10px;padding:10px;margin-top:9px}.item p{white-space:pre-wrap;word-break:break-word;max-height:110px;overflow:auto;margin:0 0 8px}.item button{font-size:12px;padding:4px 9px}.badge{font-size:12px;border-radius:8px;background:#eaf1f5;padding:3px 8px}.wide{width:100%}details summary{cursor:pointer;font-size:13px}#logs{padding:0;list-style:none;max-height:140px;overflow:auto;font-size:12px;color:#607488}#logs li{padding:3px 0}input[type=number]{width:65px;padding:3px;border:1px solid #cfdce6;border-radius:5px}#route{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}a{color:#124d5c}
-  </style>
-  <button id="launcher" aria-label="打开 NextPrompt">N → 下一步</button>
-  <section id="panel" hidden aria-label="NextPrompt 控制面板">
-    <header><div class="row between"><div><h1>NextPrompt <span style="font-weight:400;font-size:15px">下一步</span></h1><p class="sub">想好下一步，不必守着等。</p></div><button id="close" aria-label="收起面板">×</button></div><p class="sub" id="route"></p><div id="status" role="status">正在读取本地队列…</div></header>
-    <div class="section"><h2>00 · 本轮结束约定</h2><small>任务开始前，复制随机结束约定，粘贴在本轮提示词末尾一并发送。只有最终回答末尾匹配本轮口令才继续。</small><div class="controls"><button class="wide" id="prepare">生成并复制本轮结束约定</button></div><small>已在运行且没有约定的任务，不会自动猜测结束。队列发出的任务会自动附加下一轮新约定。</small></div>
-    <div class="section"><h2>01 · 当前草稿</h2><small>在 ChatGPT 原生输入框写好文字、附上文件，再启用。附件原位保留；修改后会自动暂停。</small><div class="controls"><button class="primary wide" id="arm">本轮结束后发送当前草稿</button><button class="wide danger" id="pause">暂停全部自动发送</button></div></div>
-    <div class="section"><div class="row between"><h2>02 · 后续任务</h2><span class="badge" id="count">0 条</span></div><textarea id="new-task" aria-label="下一步任务" placeholder="例如：根据刚才的测试结果，只修复仍失败的部分，并报告验证结果。"></textarea><div class="controls"><button id="add">加入队列</button><button class="primary" id="run">启动文字队列</button></div><small>队列仅保存文字。含附件的下一条请使用上方“当前草稿”。</small><div id="queue"></div></div>
-    <div class="section"><details><summary>设置、备份与诊断</summary><p><label>稳定等待 <input id="cooldown" type="number" min="5" max="120" value="12" aria-label="稳定等待秒数"> 秒</label><small>口令匹配后才开始连续确认；不使用按钮颜色或静默时间猜测完成。后台标签、离线或休眠恢复会重新观察。</small></p><div class="controls"><button id="export">导出当前队列</button><button id="import">导入文字任务</button><button id="diagnostics">复制诊断</button></div><input id="import-file" type="file" accept="application/json,.json" hidden><div class="controls"><button class="danger" id="resolve" hidden>已手动核验，解除发送锁定</button></div><p><small>刷新后需重新启动。发送结果不明时不会重试。保持电脑唤醒；新界面可能需要更新适配器。</small></p><ul id="logs"></ul></details></div>
-    <div class="section"><small>v1.1 · 本地存储 · 无 API Key · 无遥测<br>非 OpenAI 官方产品。Work 界面兼容性需要实际验证；无本轮结束口令时不会发送。需保持标签页可见。</small></div>
-  </section>`;
+  const { ui, selectTab, icon } = NextPromptUI.mount();
   const $ = id => ui.getElementById(id);
   let route = location.pathname, data, task = null, mode = null, ticking = false, mutating = false, loading = true;
-  let lastTick = performance.now(), filling = false;
+  let lastTick = performance.now(), filling = false, editState = null;
   let status = '已暂停 · 请准备下一步', gate = new Gate(), leaseRoute = null, persistChain = Promise.resolve();
   const key = () => `nextprompt:v1:${route}`;
   const blank = () => ({ version: 1, items: [], cooldown: 12, logs: [], tokens: [], inFlight: null });
@@ -37,29 +19,77 @@
     data.logs.unshift({ time: new Date().toISOString(), text }); data.logs = data.logs.slice(0, 50);
     $('logs').replaceChildren(...data.logs.map(entry => { const li = document.createElement('li'); li.textContent = `${new Date(entry.time).toLocaleTimeString()} · ${entry.text}`; return li; }));
   }
-  function show(text) { status = text; $('status').textContent = text; $('status').dataset.active = String(!!mode); }
-  function render() {
-    $('route').textContent = `当前对话 · ${route}`;
-    $('count').textContent = `${data.items.length} 条`;
-    $('cooldown').value = data.cooldown;
-    $('resolve').hidden = !data.inFlight;
-    $('queue').replaceChildren(...data.items.map((item, i) => {
-      const card = document.createElement('div'); card.className = 'item';
-      const p = document.createElement('p'); p.textContent = `${i + 1}. ${item.text}`; card.append(p);
-      const buttons = document.createElement('div'); buttons.className = 'controls';
-      for (const [name, operation] of [['编辑', () => { $('new-task').value = item.text; data.items.splice(i, 1); }], ['↑', () => { if (i) [data.items[i - 1], data.items[i]] = [data.items[i], data.items[i - 1]]; }], ['↓', () => { if (i + 1 < data.items.length) [data.items[i + 1], data.items[i]] = [data.items[i], data.items[i + 1]]; }], ['删除', () => data.items.splice(i, 1)]]) {
-        const b = document.createElement('button'); b.textContent = name; b.disabled = !!mode || !!data.inFlight;
-        b.onclick = () => safely(async () => { operation(); await persist(); render(); }); buttons.append(b);
+  const setText = (id, text) => { if ($(id).textContent !== String(text)) $(id).textContent = text; };
+  function refreshOverview(s = A.snapshot()) {
+    if (!data) return;
+    setText('route', document.title.replace(/\s*[-–—|]\s*ChatGPT\s*$/i, '') || '当前 ChatGPT 对话');
+    setText('pending-count', data.items.length); setText('nav-count', data.items.length);
+    setText('wait-count', data.cooldown); setText('auto-state', mode ? '已启用' : '未启用');
+    const ready = data.tokens.some(value => protocolInPrompt(s.userText, value));
+    setText('protocol-state', ready ? '本轮已设置' : '待准备'); $('protocol-state').dataset.ready = String(ready);
+    setText('draft-state', s.draft ? '草稿已就绪' : '待写入'); $('draft-state').dataset.ready = String(!!s.draft);
+    setText('attachment-state', s.attachments ? '已检测到附件，发送时原位保留' : '文件通过 ChatGPT 原生输入框上传');
+    setText('state-label', data.inFlight ? '待核验' : mode ? '等待中' : status.startsWith('已完成') ? '已完成' : '已暂停');
+    $('state-label').dataset.active = String(!!mode); $('state-label').dataset.locked = String(!!data.inFlight);
+    $('pause').dataset.active = String(!!mode); $('launcher').dataset.active = String(!!mode);
+  }
+  function show(text) { status = text; setText('status', text); $('status').dataset.active = String(!!mode); refreshOverview(); }
+  function renderQueue() {
+    const keyword = normalize($('search').value).toLocaleLowerCase();
+    const rows = data.items.map((item, index) => ({ item, index })).filter(({ item }) => item.text.toLocaleLowerCase().includes(keyword));
+    const locked = !!mode || !!data.inFlight;
+    const cards = rows.map(({ item, index }) => {
+      const card = document.createElement('div'); card.className = 'item'; card.dataset.next = String(index === 0);
+      const heading = document.createElement('div'); heading.className = 'item-head';
+      const number = document.createElement('span'); number.className = 'item-index'; number.textContent = String(index + 1).padStart(2, '0');
+      const label = document.createElement('span'); label.className = 'item-state'; label.textContent = index === 0 ? (mode === 'queue' ? '正在等待本轮完成' : '下一条') : '等待前序任务'; heading.append(number, label); card.append(heading);
+      if (editState?.id === item.id) {
+        const editor = document.createElement('textarea'); editor.value = editState.text; editor.maxLength = 50000; editor.setAttribute('aria-label', '编辑任务');
+        editor.oninput = () => { editState.text = editor.value; };
+        const controls = document.createElement('div'); controls.className = 'controls';
+        const save = document.createElement('button'); save.className = 'primary'; save.textContent = '保存修改'; save.disabled = locked;
+        save.onclick = () => safely(async () => {
+          const text = normalize(editState.text); if (!text || text.length > 50000) throw new Error('任务需要 1–50000 个字符');
+          item.text = text; editState = null; await persist(); render(); show('任务已更新 · 顺序保持不变');
+        });
+        const cancel = document.createElement('button'); cancel.textContent = '取消'; cancel.onclick = () => { editState = null; render(); };
+        controls.append(save, cancel); card.append(editor, controls); return card;
       }
-      card.append(buttons); return card;
-    }));
-    $('arm').disabled = loading || !!mode || !!data.inFlight;
-    $('run').disabled = loading || !!mode || !!data.inFlight || !data.items.length;
-    for (const id of ['add', 'import', 'cooldown', 'prepare']) $(id).disabled = loading || !!mode || !!data.inFlight;
+      const p = document.createElement('p'); p.textContent = item.text; card.append(p);
+      const actions = document.createElement('div'); actions.className = 'item-actions';
+      for (const [name, picture, operation, unavailable] of [
+        ['上移', 'up', () => { [data.items[index - 1], data.items[index]] = [data.items[index], data.items[index - 1]]; }, index === 0],
+        ['下移', 'down', () => { [data.items[index + 1], data.items[index]] = [data.items[index], data.items[index + 1]]; }, index + 1 === data.items.length]
+      ]) {
+        const button = document.createElement('button'); button.className = 'icon-button'; button.innerHTML = icon(picture); button.title = name; button.setAttribute('aria-label', `${name}任务 ${index + 1}`); button.disabled = locked || !!editState || unavailable;
+        button.onclick = () => safely(async () => { operation(); await persist(); render(); }); actions.append(button);
+      }
+      const spacer = document.createElement('span'); spacer.className = 'spacer'; actions.append(spacer);
+      const edit = document.createElement('button'); edit.className = 'text-button'; edit.innerHTML = icon('edit') + '编辑'; edit.disabled = locked || !!editState;
+      edit.onclick = () => { if (locked) return; editState = { id:item.id, text:item.text }; render(); $('queue').querySelector('textarea')?.focus(); };
+      const remove = document.createElement('button'); remove.className = 'text-button danger'; remove.innerHTML = icon('trash') + '删除'; remove.disabled = locked || !!editState;
+      remove.onclick = () => safely(async () => { data.items.splice(index, 1); await persist(); render(); });
+      actions.append(edit, remove); card.append(actions); return card;
+    });
+    if (!cards.length) {
+      const empty = document.createElement('div'); empty.className = 'empty';
+      empty.innerHTML = `<div class="empty-symbol" aria-hidden="true"></div><h3>${keyword ? '没有匹配的任务' : '先放下你的下一步。'}</h3><p>${keyword ? '换个关键词，或清空搜索。' : '写下任务，加入队列。<br>只有手动启动后才会发送。'}</p>`; cards.push(empty);
+    }
+    $('queue').replaceChildren(...cards);
+  }
+  function render() {
+    refreshOverview(); setText('count', `${data.items.length} 条`);
+    setText('char-count', $('new-task').value.length.toLocaleString());
+    $('cooldown').value = data.cooldown; $('resolve').hidden = !data.inFlight;
+    renderQueue();
+    $('arm').disabled = loading || !!mode || !!data.inFlight || !!editState;
+    $('run').disabled = loading || !!mode || !!data.inFlight || !!editState || !data.items.length;
+    for (const id of ['add','import','cooldown','prepare']) $(id).disabled = loading || !!mode || !!data.inFlight || !!editState;
+    $('search').disabled = !!editState;
     $('logs').replaceChildren(...data.logs.map(entry => { const li = document.createElement('li'); li.textContent = `${new Date(entry.time).toLocaleTimeString()} · ${entry.text}`; return li; }));
   }
   async function load(carriedTokens = []) {
-    loading = true; task = null; mode = null; gate.reset();
+    loading = true; task = null; mode = null; editState = null; gate.reset();
     const saved = (await chrome.storage.local.get(key()))[key()];
     data = blank();
     if (saved?.version === 1) {
@@ -95,6 +125,7 @@
     return { kind, route, text: normalize(text), attachments: s.attachments, users: s.users, userText: s.userText, token };
   }
   async function start(kind) {
+    if (editState) throw new Error('请先保存或取消任务编辑');
     const s = A.snapshot();
     if (!s.editor || !s.recognized) throw new Error('请先打开已有消息的 ChatGPT 对话');
     if (kind === 'draft' && !s.draft) throw new Error('请先在 ChatGPT 输入框写好下一条文字');
@@ -157,6 +188,7 @@
         const carriedTokens = /\/c\/[^/]+\/?$/.test(route) ? [] : [...data.tokens];
         await stop('对话已切换'); await persistChain.catch(() => {}); route = location.pathname; await load(carriedTokens); return;
       }
+      refreshOverview();
       if (!mode) return;
       const lease = await chrome.runtime.sendMessage({ type: 'lease', route });
       if (!lease?.ok) return stop('另一个标签页持有发送锁，已暂停');
@@ -173,8 +205,13 @@
       else show('本地存储不可用 · 请重新加载扩展');
     } finally { ticking = false; if (!mode) await release(); }
   }
-  $('launcher').onclick = () => { $('panel').hidden = !$('panel').hidden; };
-  $('close').onclick = () => { $('panel').hidden = true; };
+  function openPanel(open) { $('panel').hidden = !open; $('launcher').setAttribute('aria-expanded', String(open)); if (!open) $('launcher').focus(); }
+  $('launcher').onclick = () => openPanel($('panel').hidden);
+  $('close').onclick = () => openPanel(false);
+  ui.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('panel').hidden) { event.preventDefault(); openPanel(false); } });
+  $('search').oninput = () => renderQueue();
+  $('new-task').oninput = () => setText('char-count', $('new-task').value.length.toLocaleString());
+  $('new-task').onkeydown = event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('add').click(); } };
   $('prepare').onclick = () => safely(async () => {
     const token = newToken();
     if (data.tokens.length >= 100) throw new Error('结束约定已达到 100 条，请清理或更换对话');
@@ -220,7 +257,7 @@
   });
   $('diagnostics').onclick = () => safely(async () => {
     const s = A.snapshot();
-    await navigator.clipboard.writeText(JSON.stringify({ version: '1.1.0', editor: s.editor, recognized: s.recognized, busy: s.busy, uploading: s.uploading, error: s.error, sendable: s.sendable, completed: s.completed, online: s.online, foreground: s.foreground, nonFinal: s.nonFinal, interrupted: s.interrupted, protocolReady: !!task?.token, hasDraft: !!s.draft, hasAttachments: !!s.attachments, mode, locked: !!data.inFlight }, null, 2));
+    await navigator.clipboard.writeText(JSON.stringify({ version: '1.2.0', editor: s.editor, recognized: s.recognized, busy: s.busy, uploading: s.uploading, error: s.error, sendable: s.sendable, completed: s.completed, online: s.online, foreground: s.foreground, nonFinal: s.nonFinal, interrupted: s.interrupted, protocolReady: !!task?.token, hasDraft: !!s.draft, hasAttachments: !!s.attachments, mode, locked: !!data.inFlight }, null, 2));
     show('已复制诊断 · 不含提示词、附件名称或对话内容');
   });
   for (const name of ['input', 'change']) document.addEventListener(name, event => {

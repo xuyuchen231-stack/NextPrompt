@@ -10,11 +10,14 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
 (async () => {
  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
  try {
-  const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
-  await context.route('https://chatgpt.com/**', route => route.fulfill({ contentType: 'text/html', body: fixture }));
+  const context = await browser.newContext({ viewport: { width:1440, height:1000 }, permissions: ['clipboard-read', 'clipboard-write'] });
+  await context.route('https://chatgpt.com/**', route => {
+    if (new URL(route.request().url()).pathname === '/__nextprompt/assets/logo.webp') return route.fulfill({ contentType:'image/webp', body:fs.readFileSync(path.join(__dirname,'../extension/assets/logo.webp')) });
+    return route.fulfill({ contentType:'text/html', body:fixture });
+  });
   // Mock only extension APIs. The adapter and all UI/controller code run unmodified.
   await context.addInitScript(() => {
-    window.chrome = { storage: { local: { get: async k => ({ [k]: JSON.parse(localStorage.getItem(k) || 'null') }), set: async obj => { for (const [k,v] of Object.entries(obj)) localStorage.setItem(k, JSON.stringify(v)); } } }, runtime: { sendMessage: async () => ({ ok:true }), onMessage: { addListener(){} } } };
+    window.chrome = { storage: { local: { get: async k => ({ [k]: JSON.parse(localStorage.getItem(k) || 'null') }), set: async obj => { for (const [k,v] of Object.entries(obj)) localStorage.setItem(k, JSON.stringify(v)); } } }, runtime: { getURL: file => 'https://chatgpt.com/__nextprompt/' + file, sendMessage: async () => ({ ok:true }), onMessage: { addListener(){} } } };
   });
   const page = await context.newPage(); const errors=[]; page.on('pageerror',e=>{errors.push(e.message);console.error('FIXTURE PAGE ERROR:',e.message);});
   const waitForSent = async count => {
@@ -28,15 +31,15 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
       saved.tokens = [...new Set([...(saved.tokens||[]),token])];
       localStorage.setItem(key, JSON.stringify(saved));
     }, token);
-    for (const file of ['engine.js','adapter.js','content.js']) await page.addScriptTag({ path:path.join(__dirname,'../extension',file) });
+    for (const file of ['engine.js','adapter.js','ui.js','content.js']) await page.addScriptTag({ path:path.join(__dirname,'../extension',file) });
     await page.locator('#nextprompt-host #launcher').click();
     await page.waitForFunction(locked => document.querySelector('#nextprompt-host')?.shadowRoot?.getElementById('status').textContent.includes(locked ? '待核验' : '已暂停'), locked);
     if (locked) return;
     await page.evaluate(token => document.querySelector('[data-message-author-role="user"]').innerText = '检查本轮任务。\n' + NextPromptEngine.contract(token), token);
-    await page.locator('#nextprompt-host summary').click();
+    await page.locator('#nextprompt-host #tab-settings').click();
     await page.locator('#nextprompt-host #cooldown').fill('5');
     await page.locator('#nextprompt-host #cooldown').dispatchEvent('change');
-    await page.locator('#nextprompt-host summary').click();
+    await page.locator('#nextprompt-host #tab-work').click();
   };
   const complete = async text => page.evaluate(text=>{document.querySelector('[data-testid="stop-button"]')?.remove();document.querySelector('#answer [data-message-author-role="assistant"]').textContent=text;const b=document.createElement('button');b.dataset.testid='copy-turn-action-button';b.textContent='复制';document.querySelector('#answer').append(b);},text+'\n'+token);
   const root = '#nextprompt-host ';
@@ -69,6 +72,7 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   await page.waitForTimeout(6500); assert.equal(await page.evaluate(()=>sent.length),0);
   console.log('PASS pause prevents sending');
   await page.locator('#prompt-textarea').fill('');
+  await page.locator(root+'#tab-queue').click();
   for (const text of ['检查改动，报告剩余问题。','根据实际结果给出下一步建议。']) { await page.locator(root+'#new-task').fill(text); await page.locator(root+'#add').click(); }
   await page.locator(root+'#run').click();
   await waitForSent(1);
@@ -85,11 +89,57 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   await page.reload(); await boot();
   assert.equal(await page.locator(root+'#count').textContent(),'0 条');
   assert((await page.locator(root+'#status').textContent()).includes('已暂停'));
+  await page.locator(root+'#tab-queue').click();
   await page.locator(root+'#new-task').fill('结合当前结果，检查未覆盖的边界情况。'); await page.locator(root+'#add').click();
   await page.locator('#prompt-textarea').fill('请验证 Excel 导出后的数值和单位。');
+  // Queue editing is transactional: cancel must preserve the original item and order.
+  const original = await page.evaluate(()=>JSON.parse(localStorage.getItem('nextprompt:v1:/c/fixture')).items[0].text);
+  await page.locator(root+'#queue').getByRole('button',{name:'编辑',exact:true}).click();
+  await page.locator(root+'#queue textarea').fill('未保存的改动');
+  assert(await page.locator(root+'#run').isDisabled());
+  await page.locator(root+'#queue').getByRole('button',{name:'取消',exact:true}).click();
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('nextprompt:v1:/c/fixture')).items[0].text),original);
+  await page.locator(root+'#queue').getByRole('button',{name:'编辑',exact:true}).click();
+  await page.locator(root+'#queue textarea').fill('验证数据导出，核对数值与单位。');
+  await page.locator(root+'#queue').getByRole('button',{name:'保存修改',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#nextprompt-host').shadowRoot.getElementById('status').textContent.includes('任务已更新'));
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('nextprompt:v1:/c/fixture')).items.length),1);
+  for (const text of ['整理边界情况，补充必要的验证。','汇总本轮改动与待处理事项。']) { await page.locator(root+'#new-task').fill(text); await page.locator(root+'#add').click(); }
+  await page.locator(root+'#search').fill('边界');
+  assert.equal(await page.locator(root+'#queue .item').count(),1);
+  await page.locator(root+'#search').fill('不存在的任务');
+  assert((await page.locator(root+'#queue').textContent()).includes('没有匹配的任务'));
+  await page.locator(root+'#search').fill('');
+  await page.locator(root+'#queue').getByRole('button',{name:'上移任务 2',exact:true}).click();
+  assert((await page.locator(root+'#queue .item').first().textContent()).includes('整理边界情况'));
+  assert.equal(await page.locator(root+'#nav-count').textContent(),'3');
+  assert.equal(await page.locator(root+'#char-count').textContent(),'0');
+  await page.waitForFunction(()=>document.querySelector('#nextprompt-host').shadowRoot.querySelector('[data-logo]').naturalWidth>0);
   fs.mkdirSync(path.join(__dirname,'../docs/images'),{recursive:true});
   await page.screenshot({path:path.join(__dirname,'../docs/images/preview.png'),fullPage:true});
+  await page.locator(root+'#panel').screenshot({path:path.join(__dirname,'../docs/images/queue.png')});
+  await page.locator(root+'#tab-work').click();
+  await page.locator(root+'#panel').screenshot({path:path.join(__dirname,'../docs/images/workbench.png')});
+  await page.locator(root+'#tab-settings').click();
+  await page.locator(root+'#panel').screenshot({path:path.join(__dirname,'../docs/images/settings.png')});
+  await page.locator(root+'#tab-work').click();
+  await page.locator(root+'#tab-work').press('ArrowRight');
+  assert.equal(await page.locator(root+'#tab-queue').getAttribute('aria-selected'),'true');
+  await page.locator(root+'#tab-work').click();
+  await page.setViewportSize({width:390,height:844});
+  const compact = await page.locator(root+'#panel').boundingBox();
+  assert(compact.x>=0 && compact.x+compact.width<=390);
+  await page.locator(root+'#panel').screenshot({path:path.join(__dirname,'../docs/images/compact.png')});
+  await page.setViewportSize({width:1440,height:1000});
+  await page.locator(root+'#layout').click();
+  assert.equal(await page.locator(root+'#panel').getAttribute('data-layout'),'floating');
+  await page.locator(root+'#close').click();
+  assert.equal(await page.locator(root+'#launcher').getAttribute('aria-expanded'),'false');
+  await page.locator(root+'#launcher').click();
+  assert.equal(await page.locator(root+'#launcher').getAttribute('aria-expanded'),'true');
+  console.log('PASS image assets, tabs/keyboard, search/reorder, cancel/save, layout and responsive shell');
   await page.locator(root+'#prepare').click();
+  await page.waitForFunction(()=>document.querySelector('#nextprompt-host').shadowRoot.getElementById('status').textContent.includes('结束约定已复制'));
   const prepared=await page.evaluate(()=>JSON.parse(localStorage.getItem('nextprompt:v1:/c/fixture')).tokens.at(-1));
   assert(/^NEXT_PROMPT_DONE_[a-f0-9]{32}$/.test(prepared));
   await page.evaluate(()=>document.querySelector('[data-message-author-role="user"]').textContent='没有结束约定的任务');
@@ -97,6 +147,7 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   assert((await page.locator(root+'#status').textContent()).includes('本轮没有结束约定'));
   await page.evaluate(()=>{const key='nextprompt:v1:/c/fixture';const saved=JSON.parse(localStorage.getItem(key));saved.inFlight={id:'interrupted-fixture-attempt',kind:'queue',at:new Date().toISOString()};localStorage.setItem(key,JSON.stringify(saved));});
   await page.reload(); await boot({locked:true});
+  assert.equal(await page.locator(root+'#panel').getAttribute('data-layout'),'floating');
   assert(await page.locator(root+'#arm').isDisabled());
   assert(await page.locator(root+'#run').isDisabled());
   console.log('PASS reload with an uncertain send remains locked without retry');
