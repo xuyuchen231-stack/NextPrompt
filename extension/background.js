@@ -19,11 +19,13 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   }).catch(() => respond({ ok: false }));
   return true;
 });
+// Content scripts exist only on the declared ChatGPT host. Toggle by tab ID;
+// no access to sensitive tab.url fields or extra tabs permission is needed.
 chrome.action.onClicked.addListener(tab => {
-  if (tab.url?.startsWith('https://chatgpt.com/')) chrome.tabs.sendMessage(tab.id, { type: 'toggle-panel' }).catch(() => {});
+  if (tab.id !== undefined) chrome.tabs.sendMessage(tab.id, { type: 'toggle-panel' }).catch(() => {});
 });
 chrome.commands.onCommand.addListener(async command => {
   if (command !== 'toggle-panel') return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.url?.startsWith('https://chatgpt.com/')) chrome.tabs.sendMessage(tab.id, { type: 'toggle-panel' }).catch(() => {});
+  if (tab?.id !== undefined) chrome.tabs.sendMessage(tab.id, { type: 'toggle-panel' }).catch(() => {});
 });
