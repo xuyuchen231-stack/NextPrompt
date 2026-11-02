@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "NextPrompt · 下一步",
-  "version": "1.2.0",
-  "description": "为长时间 ChatGPT 任务准备下一步：草稿自动发送、对话独立队列、附件原位保留、暂停与发送校验。",
+  "version": "1.3.0",
+  "description": "随时补充 ChatGPT 当前任务，或在本轮完成后发送下一步；支持原生附件、对话队列和本地工作台。",
   "permissions": [
     "storage"
   ],

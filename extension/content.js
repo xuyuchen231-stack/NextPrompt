@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   if (document.getElementById('nextprompt-host')) return;
-  const A = NextPromptAdapter, { Gate, normalize, validToken, contract, protocolInPrompt } = NextPromptEngine;
+  const A = NextPromptAdapter, { Gate, normalize, validToken, contract, protocolInPrompt, immediateEligibility } = NextPromptEngine;
   const newToken = () => `NEXT_PROMPT_DONE_${crypto.randomUUID().replaceAll("-", "")}`;
   const { ui, selectTab, icon } = NextPromptUI.mount();
   const $ = id => ui.getElementById(id);
@@ -24,12 +24,12 @@
     if (!data) return;
     setText('route', document.title.replace(/\s*[-–—|]\s*ChatGPT\s*$/i, '') || '当前 ChatGPT 对话');
     setText('pending-count', data.items.length); setText('nav-count', data.items.length);
-    setText('wait-count', data.cooldown); setText('auto-state', mode ? '已启用' : '未启用');
+    setText('wait-count', data.cooldown); setText('auto-state', mode === 'immediate' ? '提交中' : mode ? '已启用' : '未启用');
     const ready = data.tokens.some(value => protocolInPrompt(s.userText, value));
     setText('protocol-state', ready ? '本轮已设置' : '待准备'); $('protocol-state').dataset.ready = String(ready);
     setText('draft-state', s.draft ? '草稿已就绪' : '待写入'); $('draft-state').dataset.ready = String(!!s.draft);
     setText('attachment-state', s.attachments ? '已检测到附件，发送时原位保留' : '文件通过 ChatGPT 原生输入框上传');
-    setText('state-label', data.inFlight ? '待核验' : mode ? '等待中' : status.startsWith('已完成') ? '已完成' : '已暂停');
+    setText('state-label', data.inFlight ? '待核验' : mode === 'immediate' ? '提交中' : mode ? '等待中' : status.startsWith('已提交') ? '已提交' : status.startsWith('已完成') ? '已完成' : '已暂停');
     $('state-label').dataset.active = String(!!mode); $('state-label').dataset.locked = String(!!data.inFlight);
     $('pause').dataset.active = String(!!mode); $('launcher').dataset.active = String(!!mode);
   }
@@ -82,6 +82,7 @@
     setText('char-count', $('new-task').value.length.toLocaleString());
     $('cooldown').value = data.cooldown; $('resolve').hidden = !data.inFlight;
     renderQueue();
+    $('send-now').disabled = loading || !!mode || !!data.inFlight || !!editState;
     $('arm').disabled = loading || !!mode || !!data.inFlight || !!editState;
     $('run').disabled = loading || !!mode || !!data.inFlight || !!editState || !data.items.length;
     for (const id of ['add','import','cooldown','prepare']) $(id).disabled = loading || !!mode || !!data.inFlight || !!editState;
@@ -139,6 +140,39 @@
     task = makeTask(kind, s, kind === 'draft' ? s.draft : data.items[0].text);
     gate.reset(); log(kind === 'draft' ? '已启用本轮结束后发送草稿' : '已启动文字队列'); await persist(); render(); show('已启用 · 正在观察当前轮次');
   }
+  async function confirmReceipt(active, sendRoute) {
+    let acknowledged = false;
+    for (let i = 0; i < 20; i++) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      const s = A.snapshot();
+      if (s.route !== sendRoute) break;
+      const lastUser = [...document.querySelectorAll('[data-message-author-role="user"]')].at(-1);
+      if (s.users === active.users + 1 && normalize(lastUser?.innerText) === active.text && !s.draft) { acknowledged = true; break; }
+      if (s.users > active.users + 1 || s.error) break;
+    }
+    if (!acknowledged) throw new Error('提交尚未在聊天记录确认 · 请检查是否进入原生队列，不会自动重试');
+  }
+  async function sendImmediate() {
+    if (mode || editState || data.inFlight) throw new Error('请先暂停自动发送、结束编辑或核验上次发送');
+    const s = A.snapshot(), initial = immediateEligibility(s);
+    if (!initial.ready) throw new Error(initial.reason);
+    cancelled = false;
+    const active = { kind:'immediate', route, users:s.users, userText:s.userText, text:s.draft, attachments:s.attachments, edited:false };
+    mode = 'immediate'; task = active; render(); show('正在提交原生草稿…');
+    const lease = await chrome.runtime.sendMessage({ type:'lease', route });
+    if (!lease?.ok) throw new Error('其他标签页正在管理此对话，请先暂停');
+    leaseRoute = route;
+    let ready = immediateEligibility(A.snapshot(), active);
+    if (cancelled || !mode || !ready.ready) throw new Error(cancelled ? '提交已取消' : ready.reason);
+    data.inFlight = { id:crypto.randomUUID(), kind:'immediate', at:new Date().toISOString(), itemId:null, nextToken:null };
+    log('已记录立即提交尝试，等待网页回执'); await persist();
+    ready = immediateEligibility(A.snapshot(), active);
+    if (cancelled || !mode || !ready.ready) throw new Error(cancelled ? '提交已取消' : ready.reason);
+    A.send();
+    await confirmReceipt(active, route);
+    data.inFlight = null; log('已确认原生草稿提交，不代表本轮工作已结束'); await persist();
+    await stop('已提交 · 按网页当前设置补充或排队');
+  }
   async function dispatch() {
     // Lease and state are rechecked after awaits, immediately before clicking.
     const active = { ...task }, sendRoute = route;
@@ -160,16 +194,7 @@
     before = A.snapshot();
     if (!mode || cancelled || !gate.recheck(before, active, performance.now())) throw new Error('发送前最终校验失败，请手动检查并解除锁定');
     A.send();
-    let acknowledged = false;
-    for (let i = 0; i < 20; i++) {
-      await new Promise(resolve => setTimeout(resolve, 250));
-      const s = A.snapshot();
-      if (s.route !== sendRoute) break;
-      const lastUser = [...document.querySelectorAll('[data-message-author-role="user"]')].at(-1);
-      if (s.users === active.users + 1 && normalize(lastUser?.innerText) === active.text && !s.draft) { acknowledged = true; break; }
-      if (s.users > active.users + 1 || s.error) break;
-    }
-    if (!acknowledged) throw new Error('发送结果不明确 · 请检查聊天记录，不会自动重试');
+    await confirmReceipt(active, sendRoute);
     data.inFlight = null;
     data.tokens = data.tokens.filter(value => value !== active.token);
     if (nextToken) data.tokens.push(nextToken);
@@ -219,6 +244,7 @@
     await navigator.clipboard.writeText(contract(token));
     show('结束约定已复制 · 请粘贴在本轮任务末尾一并发送');
   });
+  $('send-now').onclick = () => safely(sendImmediate);
   $('arm').onclick = () => safely(() => start('draft'));
   $('run').onclick = () => safely(() => start('queue'));
   // Pause is checked during dispatch too: mark cancellation synchronously, then release after tick.
@@ -257,7 +283,7 @@
   });
   $('diagnostics').onclick = () => safely(async () => {
     const s = A.snapshot();
-    await navigator.clipboard.writeText(JSON.stringify({ version: '1.2.0', editor: s.editor, recognized: s.recognized, busy: s.busy, uploading: s.uploading, error: s.error, sendable: s.sendable, completed: s.completed, online: s.online, foreground: s.foreground, nonFinal: s.nonFinal, interrupted: s.interrupted, protocolReady: !!task?.token, hasDraft: !!s.draft, hasAttachments: !!s.attachments, mode, locked: !!data.inFlight }, null, 2));
+    await navigator.clipboard.writeText(JSON.stringify({ version: '1.3.0', editor: s.editor, recognized: s.recognized, busy: s.busy, uploading: s.uploading, error: s.error, sendable: s.sendable, completed: s.completed, online: s.online, foreground: s.foreground, nonFinal: s.nonFinal, interrupted: s.interrupted, protocolReady: !!task?.token, hasDraft: !!s.draft, hasAttachments: !!s.attachments, mode, locked: !!data.inFlight }, null, 2));
     show('已复制诊断 · 不含提示词、附件名称或对话内容');
   });
   for (const name of ['input', 'change']) document.addEventListener(name, event => {

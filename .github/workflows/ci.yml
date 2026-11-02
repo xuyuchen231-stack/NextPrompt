@@ -24,8 +24,8 @@ jobs:
       - run: npm run package
       - uses: actions/upload-artifact@v4
         with:
-          name: nextprompt-v1.2.0
-          path: dist/nextprompt-v1.2.0.zip
+          name: nextprompt-v1.3.0
+          path: dist/nextprompt-v1.3.0.zip
       - uses: actions/upload-artifact@v4
         if: always()
         with:

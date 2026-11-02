@@ -6,7 +6,7 @@ let chromium;
 try { ({ chromium } = require('playwright')); }
 catch { ({ chromium } = require(path.join(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES || '', 'playwright'))); }
 const token = 'NEXT_PROMPT_DONE_' + 'a'.repeat(32);
-const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><style>body{font:16px/1.7 system-ui;background:#f9fafb;color:#263747;margin:0;padding:64px 8%}main{max-width:750px}article{background:white;padding:22px;border-radius:14px;margin-bottom:18px}form{position:fixed;left:8%;bottom:32px;width:50%;background:white;border:1px solid #ddd;border-radius:20px;padding:18px}#prompt-textarea{min-height:70px;outline:0;white-space:pre-wrap}button{padding:8px}h1{font-size:30px}small{color:#667}[data-message-author-role]{white-space:pre-wrap}</style></head><body><main><small>OFFLINE TEST FIXTURE · 无真实消息发送</small><h1>项目改进 · 工作对话</h1><article><div data-message-author-role="user">检查这次改动，完成测试后报告结果。<br>NEXT_PROMPT_DONE_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</div></article><article id="answer"><div data-message-author-role="assistant">已完成当前修改。正在验证测试结果…</div></article></main><form onsubmit="return false"><div contenteditable="true" id="prompt-textarea" role="textbox" aria-label="ChatGPT 输入框"></div><button type="button" data-testid="send-button">发送</button><button type="button" data-testid="stop-button">停止生成</button></form><script>window.sent=[];document.querySelector('[data-testid="send-button"]').onclick=()=>{const e=document.getElementById('prompt-textarea');const text=e.innerText.trim();if(!text)return;window.sent.push(text);const a=document.createElement('article');const u=document.createElement('div');u.dataset.messageAuthorRole='user';u.textContent=text;a.append(u);document.querySelector('main').append(a);e.innerText='';document.querySelectorAll('[data-testid="attachment"]').forEach(x=>x.remove());if(!document.querySelector('[data-testid="stop-button"]')){const b=document.createElement('button');b.dataset.testid='stop-button';b.textContent='停止生成';document.querySelector('form').append(b);}};</script></body></html>`;
+const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><style>body{font:16px/1.7 system-ui;background:#f9fafb;color:#263747;margin:0;padding:64px 8%}main{max-width:750px}article{background:white;padding:22px;border-radius:14px;margin-bottom:18px}form{position:fixed;left:8%;bottom:32px;width:50%;background:white;border:1px solid #ddd;border-radius:20px;padding:18px}#prompt-textarea{min-height:70px;outline:0;white-space:pre-wrap}button{padding:8px}h1{font-size:30px}small{color:#667}[data-message-author-role]{white-space:pre-wrap}</style></head><body><main><small>OFFLINE TEST FIXTURE · 无真实消息发送</small><h1>项目改进 · 工作对话</h1><article><div data-message-author-role="user">检查这次改动，完成测试后报告结果。<br>NEXT_PROMPT_DONE_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</div></article><article id="answer"><div data-message-author-role="assistant">已完成当前修改。正在验证测试结果…</div></article></main><form onsubmit="return false"><div contenteditable="true" id="prompt-textarea" role="textbox" aria-label="ChatGPT 输入框"></div><button type="button" data-testid="send-button">发送</button><button type="button" data-testid="stop-button">停止生成</button></form><script>window.sent=[];window.sentAttachments=[];window.stopClicks=0;document.querySelector('[data-testid="send-button"]').onclick=()=>{const e=document.getElementById('prompt-textarea');const text=e.innerText.trim();if(!text)return;window.sent.push(text);window.sentAttachments.push([...document.querySelectorAll('[data-testid="attachment"]')].map(x=>x.textContent));const a=document.createElement('article');const u=document.createElement('div');u.dataset.messageAuthorRole='user';u.textContent=text;a.append(u);document.querySelector('main').append(a);e.innerText='';document.querySelectorAll('[data-testid="attachment"]').forEach(x=>x.remove());if(!document.querySelector('[data-testid="stop-button"]')){const b=document.createElement('button');b.dataset.testid='stop-button';b.textContent='停止生成';document.querySelector('form').append(b);}};</script></body></html>`;
 (async () => {
  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
  try {
@@ -44,6 +44,28 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   const complete = async text => page.evaluate(text=>{document.querySelector('[data-testid="stop-button"]')?.remove();document.querySelector('#answer [data-message-author-role="assistant"]').textContent=text;const b=document.createElement('button');b.dataset.testid='copy-turn-action-button';b.textContent='复制';document.querySelector('#answer').append(b);},text+'\n'+token);
   const root = '#nextprompt-host ';
   await page.goto('https://chatgpt.com/c/fixture'); await boot();
+  // Immediate mode must work while the original task is still running, without a token.
+  await page.evaluate(()=>{
+    document.querySelector('[data-message-author-role="user"]').innerText='当前任务仍在执行，没有结束约定';
+    document.querySelector('[data-testid="stop-button"]').addEventListener('click',()=>window.stopClicks++);
+    const file=document.createElement('span');file.dataset.testid='attachment';file.textContent='补充数据.xlsx';document.querySelector('form').append(file);
+  });
+  await page.locator('#prompt-textarea').fill('补充：请核对所有单位。');
+  // A stale send label on a stop button must not make it eligible.
+  await page.evaluate(()=>{const b=document.querySelector('[data-testid="send-button"]');b.setAttribute('aria-label','Send prompt');b.dataset.testid='stop-button';});
+  await page.locator(root+'#send-now').click();
+  assert.equal(await page.evaluate(()=>sent.length),0);
+  await page.evaluate(()=>document.querySelector('button[aria-label="Send prompt"]').dataset.testid='send-button');
+  await page.locator(root+'#send-now').dblclick();
+  await waitForSent(1);
+  await page.waitForFunction(()=>document.querySelector('#nextprompt-host').shadowRoot.getElementById('status').textContent.startsWith('已提交'));
+  assert.equal(await page.evaluate(()=>stopClicks),0);
+  assert.equal(await page.locator('[data-testid="stop-button"]').count(),1);
+  assert.equal(await page.evaluate(()=>sent[0]),'补充：请核对所有单位。');
+  assert.deepEqual(await page.evaluate(()=>sentAttachments[0]),['补充数据.xlsx']);
+  await page.waitForTimeout(600);assert.equal(await page.evaluate(()=>sent.length),1);
+  console.log('PASS immediate submission during busy work, no token, attachment preserved, no stop or duplicate click');
+  await page.reload();await boot();
   const probe = 'literal <script>window.unwanted=true</script> & quotes\n\nblank line\n\n\nthird line';
   await page.evaluate(text=>NextPromptAdapter.fill(text),probe);
   assert.equal(await page.evaluate(()=>NextPromptAdapter.draft()),probe);
@@ -146,9 +168,23 @@ const fixture = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><sty
   await page.evaluate(()=>document.querySelector('[data-message-author-role="user"]').textContent='没有结束约定的任务');
   await page.locator(root+'#arm').click();
   assert((await page.locator(root+'#status').textContent()).includes('本轮没有结束约定'));
-  await page.evaluate(()=>{const key='nextprompt:v1:/c/fixture';const saved=JSON.parse(localStorage.getItem(key));saved.inFlight={id:'interrupted-fixture-attempt',kind:'queue',at:new Date().toISOString()};localStorage.setItem(key,JSON.stringify(saved));});
+  // Some native settings queue messages without appending a chat bubble yet.
+  // Keep that submission locked instead of guessing it failed and retrying.
+  await page.evaluate(()=>{
+    document.querySelector('[data-testid="send-button"]').onclick=()=>{
+      const editor=document.querySelector('#prompt-textarea');
+      window.sent.push(editor.innerText.trim());editor.innerText='';
+      const queued=document.createElement('div');queued.dataset.testid='native-queued-message';queued.textContent='等待网页原生队列处理';document.body.append(queued);
+    };
+  });
+  await page.locator(root+'#send-now').click();
+  await page.waitForFunction(()=>document.querySelector('#nextprompt-host').shadowRoot.getElementById('status').textContent.includes('原生队列'));
+  assert.equal(await page.evaluate(()=>sent.length),1);
+  assert(await page.locator(root+'#send-now').isDisabled());
+  await page.waitForTimeout(800);assert.equal(await page.evaluate(()=>sent.length),1);
   await page.reload(); await boot({locked:true});
   assert.equal(await page.locator(root+'#panel').getAttribute('data-layout'),'floating');
+  assert(await page.locator(root+'#send-now').isDisabled());
   assert(await page.locator(root+'#arm').isDisabled());
   assert(await page.locator(root+'#run').isDisabled());
   console.log('PASS reload with an uncertain send remains locked without retry');
