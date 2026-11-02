@@ -49,7 +49,7 @@
       attachmentUnknown: !scope || (!!first(scope, 'input[type="file"]')?.files?.length && !attachmentSignature(scope)),
       uploading: !!scope && !!first(scope, '[role="progressbar"], [aria-busy="true"], [data-state="uploading"]'),
       error,
-      sendable: !!send && !send.disabled && send.getAttribute('aria-disabled') !== 'true',
+      sendable: !!send && !send.matches(SEL.stop) && !send.disabled && send.getAttribute('aria-disabled') !== 'true',
       completed: followsUser && !!turn && !!first(turn, SEL.final) && !(last?.closest('pre, code, blockquote')),
       finalText: normalize(last?.innerText),
       users: document.querySelectorAll('[data-message-author-role="user"]').length
@@ -77,7 +77,7 @@
   }
   function send() {
     const button = first(composer() || document, SEL.send);
-    if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') throw new Error('发送按钮不可用');
+    if (!button || button.matches(SEL.stop) || button.disabled || button.getAttribute('aria-disabled') === 'true') throw new Error('发送按钮不可用');
     button.click();
   }
   let interruptedUser = null;

@@ -23,6 +23,19 @@
   function protocolInPrompt(text, token) {
     return validToken(token) && normalize(text).endsWith(contract(token));
   }
+  // Manual immediate submission intentionally does NOT depend on busy/final/token.
+  // The native page decides whether the submitted message steers or queues.
+  function immediateEligibility(s, active = null) {
+    const block = reason => ({ ready:false, reason });
+    if (!s.editor || !s.recognized) return block('请先打开已有消息且输入框唯一的 ChatGPT 对话');
+    if (s.online !== true || s.foreground !== true) return block('请保持当前页面可见并联网');
+    if (s.error) return block('请先处理页面上的错误或确认提示');
+    if (s.uploading || s.attachmentUnknown) return block('请等待附件上传完成并确认预览');
+    if (!s.draft) return block('请先在 ChatGPT 原生输入框写好消息');
+    if (!s.sendable) return block('原生发送按钮尚不可用；不会点击停止按钮');
+    if (active && (active.edited || s.route !== active.route || s.users !== active.users || s.userText !== active.userText || s.draft !== active.text || s.attachments !== active.attachments)) return block('提交前对话、草稿或附件发生变化，已取消提交');
+    return { ready:true, reason:'原生输入已就绪' };
+  }
   class Gate {
     constructor({ cooldown = 12000 } = {}) { this.cooldown = cooldown; this.reset(); }
     reset() { this.readyAt = null; this.signature = null; this.lastSample = null; this.samples = 0; }
@@ -71,7 +84,7 @@
       return this.samples >= 3 && this.readyAt !== null && this.lastSample !== null && now >= this.lastSample && now - this.lastSample <= 5000 && now - this.readyAt >= this.cooldown && this.signature === JSON.stringify([s.finalText, s.finalId, s.userText, s.users, s.attachments, task.kind === 'queue' ? '' : s.draft]);
     }
   }
-  const api = { Gate, normalize, validToken, finalMarker, contract, protocolInPrompt };
+  const api = { Gate, normalize, validToken, finalMarker, contract, protocolInPrompt, immediateEligibility };
   if (typeof module !== 'undefined') module.exports = api;
   root.NextPromptEngine = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

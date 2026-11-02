@@ -13,4 +13,7 @@ with ZipFile(out / filename, 'w', ZIP_DEFLATED) as archive:
             info = ZipInfo(str(Path('nextprompt') / file.relative_to(root / 'extension')), (2026, 11, 2, 0, 0, 0))
             info.compress_type = ZIP_DEFLATED
             archive.writestr(info, file.read_bytes())
+    info = ZipInfo('INSTALL.txt', (2026, 11, 2, 0, 0, 0))
+    info.compress_type = ZIP_DEFLATED
+    archive.writestr(info, (root / 'docs/INSTALL.txt').read_bytes())
 print(out / filename)
